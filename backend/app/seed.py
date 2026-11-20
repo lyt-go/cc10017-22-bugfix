@@ -257,3 +257,45 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
          "输出表名": "metric_pay_rate", "指标版本": "v1"},
     ],
 }
+
+
+def _build_stream_lineage_edges() -> list[dict[str, Any]]:
+    """显式血缘边：同一上游主题存在待处置死信时，该主题的已生效边标记为异常。
+
+    边是独立于血缘记录的可停用/可重建对象，重放处置通过停用异常边、建立重放边
+    来切换下游可见的有效来源。只读取种子原始定义，不依赖运行期被改写的死信状态。
+    """
+    base_dead_letters = [
+        row for row in SEED_ROWS["dead_letter"]
+        if "待处置" in str(row.get("status", ""))
+    ]
+    unresolved_topics = {row.get("原始主题") for row in base_dead_letters}
+    edges: list[dict[str, Any]] = []
+    for row in SEED_ROWS["stream_lineage"]:
+        if row.get("status") != "已生效":
+            continue
+        topic = row.get("上游主题")
+        is_abnormal = topic in unresolved_topics
+        edges.append({
+            "id": row["id"],
+            "edge_code": f"EDGE-{row['id']:04d}",
+            "source_topic": topic,
+            "target_table": row.get("下游表名"),
+            "lineage_id": row["id"],
+            "edge_status": "异常" if is_abnormal else "有效",
+            "edge_version": 1,
+            "source_dead_letter_id": None,
+            "replay_batch": None,
+            # 异常边仍是当前存在的边（只是不能作为有效来源），停用后才置 active=False
+            "active": True,
+            "abnormal": is_abnormal,
+            "updated_at": row.get("采集时间"),
+        })
+    return edges
+
+
+# 重放血缘回执与血缘边是修复后新增的独立产物表，默认没有数据；
+# 死信重放动作会同时写回执并同步这里的有效边。
+SEED_ROWS["replay_lineage_receipts"] = []
+SEED_ROWS["replay_lineage_receipt_refs"] = []
+SEED_ROWS["stream_lineage_edges"] = _build_stream_lineage_edges()

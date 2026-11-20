@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from app.schemas import ActionPayload, ActionResult, EntryPayload, PageResult
 from app.services.stream_lineage import StreamLineageService
+from app.store import store
 
 router = APIRouter(prefix="/api/stream_lineage", tags=["流式血缘"])
 service = StreamLineageService()
@@ -27,8 +28,22 @@ def csv_cell(value: Any) -> str:
 
 @router.get("")
 def get_graph() -> dict[str, Any]:
-    """返回节点与边组成的 DAG 图数据。"""
+    """返回节点与边组成的 DAG 图数据（只包含有效边，异常/已停用边不向下游展示）。"""
     return service.get_graph()
+
+
+@router.get("/edges")
+def list_edges(active: bool = Query(default=False, description="仅返回启用中的边")) -> dict[str, Any]:
+    """查询血缘边表：流式血缘页据此核对有效边、异常边与重放批次。"""
+    edges = service.list_edges(active_only=active)
+    return {"items": edges, "total": len(edges)}
+
+
+@router.get("/replay_receipts")
+def list_replay_receipts() -> dict[str, Any]:
+    """流式血缘侧保留的重放血缘回执来源记录，与死信处理侧回执一一对应。"""
+    refs = store.rows("replay_lineage_receipt_refs")
+    return {"items": refs, "total": len(refs)}
 
 
 @router.get("/export")

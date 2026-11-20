@@ -75,5 +75,29 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 死信重放与流式血缘联动
+
+死信「标记重放」不允许只改处置状态，必须与流式血缘的有效边在同一次提交里落库：
+
+1. 读取死信来源记录（订单主题、分区、原始消息体），生成**重放血缘回执**
+   （内部表 `replay_lineage_receipts`），回执保留重放批次 `RPLB-xxxx` 与有效血缘边。
+2. 固定顺序：先停用该主题下的异常血缘边（`stream_lineage_edges` 中状态为「异常」
+   的边置为「已停用」），再建立本批次的重放边；同来源同目标已存在有效边时先停用
+   旧边，保证一个批次只形成一个可查询边集，不产生重复边。
+3. 全部成功后处置状态才置为「已重放」；任一步失败整体回滚到提交前快照，
+   杜绝「页面已重放、图上仍异常」的错位。
+4. 任务中断后处置状态保持「待处置」，可凭进行中的回执调
+   `POST /api/dead_letter/{id}/replay/start` / `/replay/resume` 恢复同一批次；
+   流式血缘侧通过 `replay_lineage_receipt_refs` 保留对应的回执来源记录，
+   两侧可按批次号互相核对。
+
+相关接口：
+
+- `GET  /api/dead_letter/{id}/replay_receipts` 死信侧回执（批次 + 有效边）
+- `POST /api/dead_letter/{id}/replay/start` 建立批次并停用异常边（中断点）
+- `POST /api/dead_letter/{id}/replay/resume` 恢复批次，同步有效边并完成处置
+- `GET  /api/stream_lineage/edges` 血缘边表（有效/异常/已停用 + 批次号）
+- `GET  /api/stream_lineage/replay_receipts` 流式血缘侧回执来源引用
+
 领域：数据工程
 子方向：数仓与数据湖

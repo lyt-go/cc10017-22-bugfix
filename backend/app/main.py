@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import ROUTERS
-from app.store import store
+from app.store import INTERNAL_TABLES, store
 
 app = FastAPI(title="实时数据入湖平台", version="1.0.0")
 
@@ -29,7 +29,11 @@ for module in ROUTERS:
 @app.get("/api/health")
 def health() -> dict[str, object]:
     """健康检查：确认服务已经监听、示例数据已经就绪。"""
-    return {"ok": True, "app": settings.app_name, "modules": len(store.module_names())}
+    return {
+        "ok": True,
+        "app": settings.app_name,
+        "modules": len([name for name in store.module_names() if name not in INTERNAL_TABLES]),
+    }
 
 
 @app.get("/api/overview")

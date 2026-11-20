@@ -83,9 +83,39 @@ def create_entry(payload: dict[str, object]) -> ActionResult:
     return ActionResult(ok=True, message="死信记录已登记", entry=entry)
 
 
+@router.get("/{entry_id}/replay_receipts")
+def list_replay_receipts(entry_id: int) -> dict:
+    """查询死信记录的重放血缘回执：保留重放批次与有效血缘边，中断恢复也查这里。"""
+    if service.get_entry(entry_id) is None:
+        raise HTTPException(status_code=404, detail=f"死信记录 {entry_id} 不存在或已归档")
+    receipts = service.list_replay_receipts(entry_id)
+    return {"items": receipts, "total": len(receipts)}
+
+
+@router.post("/{entry_id}/replay/start", response_model=ActionResult)
+def start_replay(entry_id: int) -> ActionResult:
+    """建立重放批次并停用异常边；中断后可凭进行中的回执恢复，不产生重复批次。"""
+    receipt, message = service.start_replay(entry_id)
+    if receipt is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=receipt)
+
+
+@router.post("/{entry_id}/replay/resume", response_model=ActionResult)
+def resume_replay(entry_id: int) -> ActionResult:
+    """恢复中断的重放批次：补齐重放边，并与处置状态同时落库。"""
+    receipt, message = service.resume_replay(entry_id)
+    if receipt is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=receipt)
+
+
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: ActionPayload) -> ActionResult:
-    """对单条死信记录执行加入处置、标记重放、标记丢弃；不允许的动作会被拦下并说明原因。"""
+    """对单条死信记录执行加入处置、标记重放、标记丢弃；不允许的动作会被拦下并说明原因。
+
+    标记重放会生成重放血缘回执并同步流式血缘有效边，处置状态与边在同一事务提交。
+    """
     entry, message = service.run_action(entry_id, payload.action.strip())
     if entry is None:
         return ActionResult(ok=False, message=message)

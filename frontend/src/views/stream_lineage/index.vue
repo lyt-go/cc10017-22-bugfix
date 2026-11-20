@@ -10,19 +10,21 @@
     <div class="dag-wrap" ref="dagRef">
       <svg class="dag-svg" :viewBox="`0 0 ${svgW} ${svgH}`">
         <defs><marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#94a3b8"/></marker></defs>
-        <g v-for="edge in graph.edges" :key="edge.from+edge.to">
-          <line class="dag-edge" :x1="nodePos[edge.from]?.x||0" :y1="nodePos[edge.from]?.y||0" :x2="nodePos[edge.to]?.x||0" :y2="nodePos[edge.to]?.y||0"/>
+        <g v-for="edge in graph.edges" :key="edge.edge_code || `${edge.from}-${edge.to}`">
+          <line class="dag-edge" :class="{'dag-edge-replay': edge.replay_batch}" :x1="nodePos[edge.from]?.x||0" :y1="nodePos[edge.from]?.y||0" :x2="nodePos[edge.to]?.x||0" :y2="nodePos[edge.to]?.y||0"/>
           <text :x="(nodePos[edge.from]?.x+nodePos[edge.to]?.x)/2" :y="(nodePos[edge.from]?.y+nodePos[edge.to]?.y)/2 - 6" font-size="10" fill="#64748b" text-anchor="middle">{{ edge.label }}</text>
         </g>
-        <g v-for="node in graph.nodes" :key="node.id" :class="['dag-node', {selected: selectedNode?.id===node.id}]" @click="selectNode(node)" @mousedown="startDrag($event, node)">
-          <rect :x="nodePos[node.id]?.x - 60" :y="nodePos[node.id]?.y - 20" width="120" height="40" rx="6" :fill="nodeColor(node.status)"/>
+        <g v-for="node in graph.nodes" :key="node.id" :class="['dag-node', {selected: selectedNode?.id===node.id, abnormal: node.abnormal}]" @click="selectNode(node)" @mousedown="startDrag($event, node)">
+          <rect :x="nodePos[node.id]?.x - 60" :y="nodePos[node.id]?.y - 20" width="120" height="40" rx="6" :fill="nodeColor(node)"/>
           <text :x="nodePos[node.id]?.x" :y="nodePos[node.id]?.y + 4" text-anchor="middle">{{ node.name || node.label }}</text>
+          <text v-if="node.abnormal" :x="nodePos[node.id]?.x + 52" :y="nodePos[node.id]?.y - 12" class="dag-abnormal-tag" text-anchor="middle">异常</text>
         </g>
       </svg>
     </div>
     <div v-if="selectedNode" class="dag-detail" data-testid="dag-detail">
       <dl><dt>编号</dt><dd>{{ selectedNode.id }}</dd></dl>
       <dl><dt>名称</dt><dd>{{ selectedNode.name || selectedNode.label }}</dd></dl>
+      <dl><dt>链路状态</dt><dd :class="{'error-text': selectedNode.abnormal}">{{ selectedNode.abnormal ? '异常（存在未重放死信）' : '正常' }}</dd></dl>
       <dl v-for="f in detailFields" :key="f"><dt>{{ f }}</dt><dd>{{ selectedNode[f] ?? '—' }}</dd></dl>
       <div style="grid-column:1/-1; margin-top:8px; display:flex; gap:6px;">
         <button v-for="action in actions" :key="action" class="btn" :data-testid="`action-${selectedNode.id}-${action}`" @click="runAction(action, selectedNode)">{{ action }}</button>
@@ -37,7 +39,10 @@
         </div>
       </form>
     </div>
-    <footer class="page-foot"><span>{{ graph.nodes.length }} 个节点</span></footer>
+    <footer class="page-foot">
+      <span>{{ graph.nodes.length }} 个节点 · {{ graph.edges.length }} 条有效血缘边</span>
+      <span v-if="abnormalCount > 0" class="error-text" data-testid="abnormal-count">{{ abnormalCount }} 个节点仍存在异常血缘边</span>
+    </footer>
   </section>
 </template>
 <script setup lang="ts">
@@ -47,9 +52,11 @@ const ENDPOINT = '/api/stream_lineage'
 const columns = ["记录编号", "上游主题", "下游表名", "转换节点", "字段映射", "采集时间", "延迟偏移", "链路版本"]
 const actions = ["提交校验", "标记生效", "停用记录"]
 const statuses = ["草稿", "待校验", "已生效", "已停用"]
-const STATUS_COLORS: Record<string,string> = { '草稿':'#e2e8f0','待校验':'#fef3c7','已启用':'#d1fae5','已停用':'#fee2e2' }
-const nodeColor = (s: string) => STATUS_COLORS[s] || '#e2e8f0'
+const STATUS_COLORS: Record<string,string> = { '草稿':'#e2e8f0','待校验':'#fef3c7','已生效':'#d1fae5','已启用':'#d1fae5','已停用':'#fee2e2' }
+const ABNORMAL_COLOR = '#fecaca'
+const nodeColor = (node: any) => node.abnormal ? ABNORMAL_COLOR : (STATUS_COLORS[node.status] || '#e2e8f0')
 const graph = reactive<{nodes: any[], edges: any[]}>({ nodes: [], edges: [] })
+const abnormalCount = computed(() => graph.nodes.filter((node) => node.abnormal).length)
 const nodePos = ref<Record<number,{x:number;y:number}>>({})
 const selectedNode = ref<any>(null)
 const detailFields = computed(() => columns.filter((f: string) => !['id','name','label','status'].includes(f)))

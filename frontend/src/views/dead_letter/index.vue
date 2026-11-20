@@ -36,7 +36,10 @@
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)" :data-testid="`row-${row.id}`" :data-status="String(row.status)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            {{ row[column] ?? '—' }}
+            <span v-if="column === '处置状态' && row.replay_batch" class="replay-batch-tag" :data-testid="`replay-batch-${row.id}`">重放批次 {{ row.replay_batch }}</span>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -74,6 +77,7 @@
 
     <footer class="page-foot">
       <span>共 {{ total }} 条死信处理记录</span>
+      <span v-if="infoMessage" class="info-text" data-testid="info-message">{{ infoMessage }}</span>
       <span v-if="errorMessage" class="error-text">{{ errorMessage }}</span>
     </footer>
   </section>
@@ -95,6 +99,7 @@ const metricNames = ["死信记录总数", "待处置记录", "已重放记录"]
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
+const infoMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
 const showCreate = ref(false)
@@ -103,7 +108,7 @@ const createValues = ref<Record<string, string>>({})
 const stats = computed(() => [
   { label: metricNames[0], value: total.value },
   { label: metricNames[1], value: rows.value.filter((row) => row.status === statuses[1]).length },
-  { label: metricNames[2], value: rows.value.filter((row) => row.status === statuses[statuses.length - 1]).length },
+  { label: metricNames[2], value: rows.value.filter((row) => row.status === statuses[2]).length },
 ])
 
 function resetFilters() {
@@ -154,14 +159,17 @@ async function submitCreate() {
 
 async function runAction(action: string, row: Row) {
   errorMessage.value = ''
+  infoMessage.value = ''
   try {
     const response = await request(`${ENDPOINT}/${row.id}/actions`, {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('死信处理动作未生效，请稍后重试')
+    const payload = await response.json()
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || '死信处理动作未生效，请稍后重试')
     }
+    infoMessage.value = payload.message
     await reload()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '死信处理操作失败'

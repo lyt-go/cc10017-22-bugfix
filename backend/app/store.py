@@ -8,6 +8,17 @@ from typing import Any
 
 from app.seed import SEED_ROWS
 
+# 内部产物表：不对外作为业务模块出现在运营概览里
+INTERNAL_TABLES = {
+    "upsert_merge_artifacts", "iceberg_partition_specs",
+    "quality_inspection_results", "materialized_refresh_log",
+    "sink_dispatch_queue", "compact_results",
+    "ttl_applied_log", "realtime_metric_results",
+    "quality_check_results",
+    "replay_lineage_receipts", "replay_lineage_receipt_refs",
+    "stream_lineage_edges",
+}
+
 
 class Store:
     def __init__(self) -> None:
@@ -21,6 +32,12 @@ class Store:
     def rows(self, module: str) -> list[dict[str, Any]]:
         return self._tables.setdefault(module, [])
 
+    def reset_to_seed(self) -> None:
+        """从种子定义重建全部表，用于测试隔离与运行期状态复位。"""
+        self._tables = {
+            name: [dict(row) for row in rows] for name, rows in SEED_ROWS.items()
+        }
+
     def find(self, module: str, entry_id: int) -> dict[str, Any] | None:
         for row in self.rows(module):
             if int(row.get("id", 0)) == entry_id:
@@ -30,6 +47,8 @@ class Store:
     def overview(self) -> dict[str, object]:
         modules: list[dict[str, object]] = []
         for name in self.module_names():
+            if name in INTERNAL_TABLES:
+                continue
             rows = self.rows(name)
             modules.append({
                 "name": name,
